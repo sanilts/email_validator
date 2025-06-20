@@ -1,6 +1,6 @@
 <?php
 // =============================================================================
-// INSTALLATION SCRIPT (install.php)
+// FIXED INSTALLATION SCRIPT (install.php)
 // =============================================================================
 ?>
 <!DOCTYPE html>
@@ -34,8 +34,13 @@
                                 $pdo->exec("CREATE DATABASE IF NOT EXISTS $dbname");
                                 $pdo->exec("USE $dbname");
                                 
-                                // Create tables
-                                $sql = "
+                                // Set foreign key checks to 0 temporarily
+                                $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
+                                
+                                // Create tables in correct order (dependencies first)
+                                
+                                // 1. Users table (no dependencies)
+                                $pdo->exec("
                                 CREATE TABLE IF NOT EXISTS users (
                                     id INT AUTO_INCREMENT PRIMARY KEY,
                                     username VARCHAR(50) UNIQUE NOT NULL,
@@ -45,8 +50,52 @@
                                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                                     last_login TIMESTAMP NULL,
                                     is_active BOOLEAN DEFAULT 1
-                                );
+                                )");
 
+                                // 2. System settings table (no dependencies)
+                                $pdo->exec("
+                                CREATE TABLE IF NOT EXISTS system_settings (
+                                    id INT AUTO_INCREMENT PRIMARY KEY,
+                                    setting_key VARCHAR(100) UNIQUE NOT NULL,
+                                    setting_value TEXT,
+                                    description TEXT,
+                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                                )");
+
+                                // 3. Email lists table (depends on users)
+                                $pdo->exec("
+                                CREATE TABLE IF NOT EXISTS email_lists (
+                                    id INT AUTO_INCREMENT PRIMARY KEY,
+                                    list_name VARCHAR(255) NOT NULL,
+                                    description TEXT,
+                                    user_id INT NOT NULL,
+                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                    is_active BOOLEAN DEFAULT 1,
+                                    total_emails INT DEFAULT 0,
+                                    valid_emails INT DEFAULT 0,
+                                    invalid_emails INT DEFAULT 0,
+                                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                                    INDEX idx_user_list (user_id, list_name)
+                                )");
+
+                                // 4. Email templates table (depends on users)
+                                $pdo->exec("
+                                CREATE TABLE IF NOT EXISTS email_templates (
+                                    id INT AUTO_INCREMENT PRIMARY KEY,
+                                    template_name VARCHAR(255) NOT NULL,
+                                    subject VARCHAR(500) NOT NULL,
+                                    message TEXT NOT NULL,
+                                    template_type ENUM('verification', 'notification') DEFAULT 'verification',
+                                    user_id INT NOT NULL,
+                                    is_default BOOLEAN DEFAULT 0,
+                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                                )");
+
+                                // 5. Email validations table (depends on users, email_lists, email_templates)
+                                $pdo->exec("
                                 CREATE TABLE IF NOT EXISTS email_validations (
                                     id INT AUTO_INCREMENT PRIMARY KEY,
                                     email VARCHAR(255) NOT NULL,
@@ -60,15 +109,18 @@
                                     list_id INT NULL,
                                     template_id INT NULL,
                                     validation_details JSON,
-                                    FOREIGN KEY (user_id) REFERENCES users(id),
-                                    FOREIGN KEY (list_id) REFERENCES email_lists(id),
-                                    FOREIGN KEY (template_id) REFERENCES email_templates(id),
+                                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                                    FOREIGN KEY (list_id) REFERENCES email_lists(id) ON DELETE SET NULL,
+                                    FOREIGN KEY (template_id) REFERENCES email_templates(id) ON DELETE SET NULL,
                                     INDEX idx_email (email),
                                     INDEX idx_validation_date (validation_date),
                                     INDEX idx_batch (batch_id),
-                                    INDEX idx_list (list_id)
-                                );
+                                    INDEX idx_list (list_id),
+                                    INDEX idx_user (user_id)
+                                )");
 
+                                // 6. Email batches table (depends on users)
+                                $pdo->exec("
                                 CREATE TABLE IF NOT EXISTS email_batches (
                                     id INT AUTO_INCREMENT PRIMARY KEY,
                                     batch_id VARCHAR(50) UNIQUE NOT NULL,
@@ -80,9 +132,23 @@
                                     status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
                                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                                     completed_at TIMESTAMP NULL,
-                                    FOREIGN KEY (user_id) REFERENCES users(id)
-                                );
+                                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                                )");
 
+                                // 7. List email assignments (depends on email_lists, email_validations)
+                                $pdo->exec("
+                                CREATE TABLE IF NOT EXISTS list_email_assignments (
+                                    id INT AUTO_INCREMENT PRIMARY KEY,
+                                    list_id INT NOT NULL,
+                                    validation_id INT NOT NULL,
+                                    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                    FOREIGN KEY (list_id) REFERENCES email_lists(id) ON DELETE CASCADE,
+                                    FOREIGN KEY (validation_id) REFERENCES email_validations(id) ON DELETE CASCADE,
+                                    UNIQUE KEY unique_assignment (list_id, validation_id)
+                                )");
+
+                                // 8. SMTP settings table (depends on users)
+                                $pdo->exec("
                                 CREATE TABLE IF NOT EXISTS smtp_settings (
                                     id INT AUTO_INCREMENT PRIMARY KEY,
                                     user_id INT NOT NULL,
@@ -96,9 +162,11 @@
                                     from_name VARCHAR(255),
                                     is_active BOOLEAN DEFAULT 1,
                                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                    FOREIGN KEY (user_id) REFERENCES users(id)
-                                );
+                                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                                )");
 
+                                // 9. Activity logs table (depends on users)
+                                $pdo->exec("
                                 CREATE TABLE IF NOT EXISTS activity_logs (
                                     id INT AUTO_INCREMENT PRIMARY KEY,
                                     user_id INT NOT NULL,
@@ -107,64 +175,20 @@
                                     ip_address VARCHAR(45),
                                     user_agent TEXT,
                                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                    FOREIGN KEY (user_id) REFERENCES users(id),
+                                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                                     INDEX idx_user_action (user_id, action),
                                     INDEX idx_created_at (created_at)
-                                );
-
-                                CREATE TABLE IF NOT EXISTS system_settings (
-                                    id INT AUTO_INCREMENT PRIMARY KEY,
-                                    setting_key VARCHAR(100) UNIQUE NOT NULL,
-                                    setting_value TEXT,
-                                    description TEXT,
-                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                                );
-
-                                CREATE TABLE IF NOT EXISTS email_lists (
-                                    id INT AUTO_INCREMENT PRIMARY KEY,
-                                    list_name VARCHAR(255) NOT NULL,
-                                    description TEXT,
-                                    user_id INT NOT NULL,
-                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                    is_active BOOLEAN DEFAULT 1,
-                                    total_emails INT DEFAULT 0,
-                                    valid_emails INT DEFAULT 0,
-                                    invalid_emails INT DEFAULT 0,
-                                    FOREIGN KEY (user_id) REFERENCES users(id),
-                                    INDEX idx_user_list (user_id, list_name)
-                                );
-
-                                CREATE TABLE IF NOT EXISTS email_templates (
-                                    id INT AUTO_INCREMENT PRIMARY KEY,
-                                    template_name VARCHAR(255) NOT NULL,
-                                    subject VARCHAR(500) NOT NULL,
-                                    message TEXT NOT NULL,
-                                    template_type ENUM('verification', 'notification') DEFAULT 'verification',
-                                    user_id INT NOT NULL,
-                                    is_default BOOLEAN DEFAULT 0,
-                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                    FOREIGN KEY (user_id) REFERENCES users(id)
-                                );
-
-                                CREATE TABLE IF NOT EXISTS list_email_assignments (
-                                    id INT AUTO_INCREMENT PRIMARY KEY,
-                                    list_id INT NOT NULL,
-                                    validation_id INT NOT NULL,
-                                    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                    FOREIGN KEY (list_id) REFERENCES email_lists(id) ON DELETE CASCADE,
-                                    FOREIGN KEY (validation_id) REFERENCES email_validations(id) ON DELETE CASCADE,
-                                    UNIQUE KEY unique_assignment (list_id, validation_id)
-                                );
-                                ";
+                                )");
                                 
-                                $pdo->exec($sql);
+                                // Re-enable foreign key checks
+                                $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
                                 
                                 // Insert default admin user
                                 $admin_password = password_hash($_POST['admin_password'], PASSWORD_DEFAULT);
                                 $stmt = $pdo->prepare("INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, 'admin')");
                                 $stmt->execute([$_POST['admin_username'], $_POST['admin_email'], $admin_password]);
+                                
+                                $admin_id = $pdo->lastInsertId();
                                 
                                 // Insert default settings
                                 $default_settings = [
@@ -180,7 +204,6 @@
                                 }
 
                                 // Insert default email template
-                                $admin_id = $pdo->lastInsertId();
                                 $default_template = [
                                     'Email Verification - Standard',
                                     'Please verify your email address',
@@ -194,45 +217,86 @@
                                 $stmt->execute($default_template);
                                 
                                 echo '<div class="alert alert-success"><i class="fas fa-check"></i> Installation completed successfully!</div>';
+                                echo '<p class="mb-3">Your email validation system is now ready to use.</p>';
+                                echo '<div class="d-grid gap-2">';
                                 echo '<a href="index.php" class="btn btn-primary"><i class="fas fa-home"></i> Go to Application</a>';
+                                echo '<a href="login.php" class="btn btn-outline-primary"><i class="fas fa-sign-in-alt"></i> Login Page</a>';
+                                echo '</div>';
                                 
                             } catch (Exception $e) {
                                 echo '<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> Error: ' . $e->getMessage() . '</div>';
+                                echo '<p class="text-muted">Please check your database credentials and try again.</p>';
                             }
                         } else {
                         ?>
+                        <div class="alert alert-info">
+                            <h5><i class="fas fa-info-circle"></i> Installation Requirements</h5>
+                            <ul class="mb-0">
+                                <li>PHP 7.4 or higher</li>
+                                <li>MySQL 5.7 or higher</li>
+                                <li>PDO, cURL, and OpenSSL extensions</li>
+                                <li>Write permissions for the application directory</li>
+                            </ul>
+                        </div>
+                        
                         <form method="post">
-                            <div class="mb-3">
-                                <label class="form-label">Database Host</label>
-                                <input type="text" class="form-control" name="host" value="localhost" required>
+                            <h5>Database Configuration</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Database Host</label>
+                                        <input type="text" class="form-control" name="host" value="localhost" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Database Name</label>
+                                        <input type="text" class="form-control" name="dbname" value="email_validator" required>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="mb-3">
-                                <label class="form-label">Database Username</label>
-                                <input type="text" class="form-control" name="username" value="root" required>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Database Username</label>
+                                        <input type="text" class="form-control" name="username" value="root" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Database Password</label>
+                                        <input type="password" class="form-control" name="password" placeholder="Leave empty if no password">
+                                    </div>
+                                </div>
                             </div>
-                            <div class="mb-3">
-                                <label class="form-label">Database Password</label>
-                                <input type="password" class="form-control" name="password">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Database Name</label>
-                                <input type="text" class="form-control" name="dbname" value="email_validator" required>
-                            </div>
+                            
                             <hr>
-                            <h5>Admin Account</h5>
-                            <div class="mb-3">
-                                <label class="form-label">Admin Username</label>
-                                <input type="text" class="form-control" name="admin_username" value="admin" required>
+                            <h5>Administrator Account</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Admin Username</label>
+                                        <input type="text" class="form-control" name="admin_username" value="admin" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Admin Email</label>
+                                        <input type="email" class="form-control" name="admin_email" placeholder="admin@example.com" required>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="mb-3">
-                                <label class="form-label">Admin Email</label>
-                                <input type="email" class="form-control" name="admin_email" required>
-                            </div>
-                            <div class="mb-3">
+                            <div class="mb-4">
                                 <label class="form-label">Admin Password</label>
-                                <input type="password" class="form-control" name="admin_password" required>
+                                <input type="password" class="form-control" name="admin_password" placeholder="Enter a strong password" required>
+                                <div class="form-text">Use a strong password with at least 8 characters</div>
                             </div>
-                            <button type="submit" class="btn btn-primary"><i class="fas fa-download"></i> Install</button>
+                            
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-primary btn-lg">
+                                    <i class="fas fa-download"></i> Install Email Validator
+                                </button>
+                            </div>
                         </form>
                         <?php } ?>
                     </div>
@@ -240,5 +304,7 @@
             </div>
         </div>
     </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
