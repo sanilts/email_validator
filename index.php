@@ -1788,6 +1788,488 @@ $user = $stmt->fetch(PDO::FETCH_ASSOC);
                 })
                 .catch(error => console.error('Error loading details:', error));
         }
+        
+        // Add this JavaScript code to your index.php file, in the existing <script> section
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Load initial data
+    loadEmailLists();
+    loadEmailTemplates();
+    loadListsForDropdown();
+    loadTemplatesForDropdown();
+    
+    // Initialize event handlers
+    initializeEventHandlers();
+});
+
+function initializeEventHandlers() {
+    // Create New List button in bulk upload section
+    const createNewListBtn = document.getElementById('create-new-list-btn');
+    if (createNewListBtn) {
+        createNewListBtn.addEventListener('click', function() {
+            const newListFields = document.getElementById('new-list-fields');
+            const bulkEmailList = document.getElementById('bulk-email-list');
+            
+            if (newListFields.style.display === 'none') {
+                newListFields.style.display = 'block';
+                bulkEmailList.value = 'new';
+                this.innerHTML = '<i class="fas fa-minus"></i> Cancel';
+            } else {
+                newListFields.style.display = 'none';
+                bulkEmailList.value = '';
+                this.innerHTML = '<i class="fas fa-plus"></i> New List';
+            }
+        });
+    }
+
+    // Save List button in modal
+    const saveListBtn = document.getElementById('save-list');
+    if (saveListBtn) {
+        saveListBtn.addEventListener('click', function() {
+            createEmailList();
+        });
+    }
+
+    // Save Template button in modal
+    const saveTemplateBtn = document.getElementById('save-template');
+    if (saveTemplateBtn) {
+        saveTemplateBtn.addEventListener('click', function() {
+            createEmailTemplate();
+        });
+    }
+
+    // Update Template button in edit modal
+    const updateTemplateBtn = document.getElementById('update-template');
+    if (updateTemplateBtn) {
+        updateTemplateBtn.addEventListener('click', function() {
+            updateEmailTemplate();
+        });
+    }
+
+    // Download list modal handlers
+    const downloadModal = document.getElementById('downloadListModal');
+    if (downloadModal) {
+        downloadModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const listId = button.getAttribute('data-list-id');
+            const listName = button.getAttribute('data-list-name');
+            
+            document.getElementById('download-list-name').textContent = listName;
+            
+            // Set up download option buttons
+            const downloadOptions = downloadModal.querySelectorAll('.download-option');
+            downloadOptions.forEach(option => {
+                option.onclick = function() {
+                    const type = this.getAttribute('data-type');
+                    window.location.href = `api/download-list.php?list_id=${listId}&type=${type}`;
+                    bootstrap.Modal.getInstance(downloadModal).hide();
+                };
+            });
+        });
+    }
+}
+
+// Create Email List Function
+function createEmailList() {
+    const listName = document.getElementById('list-name').value.trim();
+    const listDescription = document.getElementById('list-description').value.trim();
+    
+    if (!listName) {
+        showAlert('List name is required', 'warning');
+        return;
+    }
+    
+    const saveBtn = document.getElementById('save-list');
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+    
+    fetch('api/email-lists.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            list_name: listName,
+            description: listDescription
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            document.getElementById('create-list-form').reset();
+            bootstrap.Modal.getInstance(document.getElementById('createListModal')).hide();
+            loadEmailLists();
+            loadListsForDropdown();
+        } else {
+            showAlert(data.error || 'Failed to create list', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showAlert('Failed to create list', 'danger');
+    })
+    .finally(() => {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="fas fa-save"></i> Create List';
+    });
+}
+
+// Create Email Template Function
+function createEmailTemplate() {
+    const templateName = document.getElementById('template-name').value.trim();
+    const templateSubject = document.getElementById('template-subject').value.trim();
+    const templateMessage = document.getElementById('template-message').value.trim();
+    const templateType = document.getElementById('template-type').value;
+    const isDefault = document.getElementById('template-default').checked;
+    
+    if (!templateName || !templateSubject || !templateMessage) {
+        showAlert('All template fields are required', 'warning');
+        return;
+    }
+    
+    const saveBtn = document.getElementById('save-template');
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+    
+    fetch('api/email-templates.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            template_name: templateName,
+            subject: templateSubject,
+            message: templateMessage,
+            template_type: templateType,
+            is_default: isDefault
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            document.getElementById('create-template-form').reset();
+            bootstrap.Modal.getInstance(document.getElementById('createTemplateModal')).hide();
+            loadEmailTemplates();
+            loadTemplatesForDropdown();
+        } else {
+            showAlert(data.error || 'Failed to create template', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showAlert('Failed to create template', 'danger');
+    })
+    .finally(() => {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="fas fa-save"></i> Create Template';
+    });
+}
+
+// Update Email Template Function
+function updateEmailTemplate() {
+    const templateId = document.getElementById('edit-template-id').value;
+    const templateName = document.getElementById('edit-template-name').value.trim();
+    const templateSubject = document.getElementById('edit-template-subject').value.trim();
+    const templateMessage = document.getElementById('edit-template-message').value.trim();
+    const isDefault = document.getElementById('edit-template-default').checked;
+    
+    if (!templateName || !templateSubject || !templateMessage) {
+        showAlert('All template fields are required', 'warning');
+        return;
+    }
+    
+    const updateBtn = document.getElementById('update-template');
+    updateBtn.disabled = true;
+    updateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
+    
+    fetch('api/email-templates.php', {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            id: templateId,
+            template_name: templateName,
+            subject: templateSubject,
+            message: templateMessage,
+            is_default: isDefault
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('editTemplateModal')).hide();
+            loadEmailTemplates();
+            loadTemplatesForDropdown();
+        } else {
+            showAlert(data.error || 'Failed to update template', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showAlert('Failed to update template', 'danger');
+    })
+    .finally(() => {
+        updateBtn.disabled = false;
+        updateBtn.innerHTML = '<i class="fas fa-save"></i> Update Template';
+    });
+}
+
+// Load Email Lists Function
+function loadEmailLists() {
+    fetch('api/email-lists.php')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('lists-table');
+            if (!tbody) return;
+            
+            tbody.innerHTML = '';
+            
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center">No lists found</td></tr>';
+                return;
+            }
+
+            data.forEach(list => {
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td>${list.list_name}</td>
+                    <td>${list.description || '-'}</td>
+                    <td>${list.total_emails || 0}</td>
+                    <td class="text-success">${list.valid_emails || 0}</td>
+                    <td class="text-danger">${list.invalid_emails || 0}</td>
+                    <td>${new Date(list.created_at).toLocaleDateString()}</td>
+                    <td>
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#downloadListModal" 
+                                    data-list-id="${list.id}" data-list-name="${list.list_name}">
+                                <i class="fas fa-download"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteEmailList(${list.id})">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                `;
+            });
+        })
+        .catch(error => console.error('Error loading lists:', error));
+}
+
+// Load Email Templates Function
+function loadEmailTemplates() {
+    fetch('api/email-templates.php')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('templates-table');
+            if (!tbody) return;
+            
+            tbody.innerHTML = '';
+            
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center">No templates found</td></tr>';
+                return;
+            }
+
+            data.forEach(template => {
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td>${template.template_name}</td>
+                    <td>${template.subject}</td>
+                    <td><span class="badge bg-info">${template.template_type}</span></td>
+                    <td>${template.is_default ? '<i class="fas fa-check text-success"></i>' : ''}</td>
+                    <td>${new Date(template.created_at).toLocaleDateString()}</td>
+                    <td>
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-sm btn-outline-primary" onclick="editEmailTemplate(${template.id})">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteEmailTemplate(${template.id})">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                `;
+            });
+        })
+        .catch(error => console.error('Error loading templates:', error));
+}
+
+// Load Lists for Dropdown
+function loadListsForDropdown() {
+    fetch('api/email-lists.php')
+        .then(response => response.json())
+        .then(data => {
+            const selects = ['single-email-list', 'bulk-email-list'];
+            
+            selects.forEach(selectId => {
+                const select = document.getElementById(selectId);
+                if (select) {
+                    // Store current value
+                    const currentValue = select.value;
+                    
+                    // Clear and rebuild options
+                    select.innerHTML = selectId === 'single-email-list' 
+                        ? '<option value="">Select a list or leave empty</option>'
+                        : '<option value="">Select existing list or create new</option>';
+                    
+                    data.forEach(list => {
+                        const option = document.createElement('option');
+                        option.value = list.id;
+                        option.textContent = list.list_name;
+                        select.appendChild(option);
+                    });
+                    
+                    // Restore previous value if it still exists
+                    if (currentValue) {
+                        select.value = currentValue;
+                    }
+                }
+            });
+        })
+        .catch(error => console.error('Error loading lists for dropdown:', error));
+}
+
+// Load Templates for Dropdown
+function loadTemplatesForDropdown() {
+    fetch('api/email-templates.php')
+        .then(response => response.json())
+        .then(data => {
+            const selects = ['single-email-template', 'bulk-email-template'];
+            
+            selects.forEach(selectId => {
+                const select = document.getElementById(selectId);
+                if (select) {
+                    // Store current value
+                    const currentValue = select.value;
+                    
+                    // Clear and rebuild options
+                    select.innerHTML = '<option value="">Use default template</option>';
+                    
+                    data.forEach(template => {
+                        const option = document.createElement('option');
+                        option.value = template.id;
+                        option.textContent = template.template_name;
+                        if (template.is_default) {
+                            option.textContent += ' (Default)';
+                        }
+                        select.appendChild(option);
+                    });
+                    
+                    // Restore previous value if it still exists
+                    if (currentValue) {
+                        select.value = currentValue;
+                    }
+                }
+            });
+        })
+        .catch(error => console.error('Error loading templates for dropdown:', error));
+}
+
+// Edit Email Template Function
+function editEmailTemplate(templateId) {
+    fetch(`api/email-templates.php?id=${templateId}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('edit-template-id').value = data.id;
+            document.getElementById('edit-template-name').value = data.template_name;
+            document.getElementById('edit-template-subject').value = data.subject;
+            document.getElementById('edit-template-message').value = data.message;
+            document.getElementById('edit-template-default').checked = data.is_default == 1;
+            
+            const modal = new bootstrap.Modal(document.getElementById('editTemplateModal'));
+            modal.show();
+        })
+        .catch(error => {
+            console.error('Error loading template:', error);
+            showAlert('Failed to load template', 'danger');
+        });
+}
+
+// Delete Email Template Function
+function deleteEmailTemplate(templateId) {
+    if (confirm('Are you sure you want to delete this template?')) {
+        fetch(`api/email-templates.php?id=${templateId}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert(data.message, 'success');
+                loadEmailTemplates();
+                loadTemplatesForDropdown();
+            } else {
+                showAlert(data.error || 'Failed to delete template', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showAlert('Failed to delete template', 'danger');
+        });
+    }
+}
+
+// Delete Email List Function
+function deleteEmailList(listId) {
+    if (confirm('Are you sure you want to delete this list? This will not delete the email validations, only the list organization.')) {
+        fetch(`api/email-lists.php?id=${listId}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert(data.message, 'success');
+                loadEmailLists();
+                loadListsForDropdown();
+            } else {
+                showAlert(data.error || 'Failed to delete list', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showAlert('Failed to delete list', 'danger');
+        });
+    }
+}
+
+// Update the loadSectionData function to include lists and templates
+function loadSectionData(section) {
+    switch(section) {
+        case 'dashboard':
+            loadDashboardStats();
+            break;
+        case 'results':
+            loadResults();
+            break;
+        case 'user-management':
+            loadUsers();
+            break;
+        case 'activity-logs':
+            loadActivityLogs();
+            break;
+        case 'smtp-settings':
+            loadSmtpSettings();
+            break;
+        case 'lists-management':
+            loadEmailLists();
+            break;
+        case 'email-templates':
+            loadEmailTemplates();
+            break;
+        case 'single-validation':
+            loadListsForDropdown();
+            loadTemplatesForDropdown();
+            break;
+        case 'bulk-validation':
+            loadListsForDropdown();
+            loadTemplatesForDropdown();
+            break;
+    }
+}
     </script>
 </body>
 </html>
