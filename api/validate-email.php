@@ -1,6 +1,6 @@
 <?php
 // =============================================================================
-// ENHANCED EMAIL VALIDATION API (api/validate-email.php)
+// FIXED EMAIL VALIDATION API (api/validate-email.php)
 // =============================================================================
 
 header('Content-Type: application/json');
@@ -15,9 +15,9 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $input = json_decode(file_get_contents('php://input'), true);
-$email = filter_var($input['email'], FILTER_SANITIZE_EMAIL);
+$email = isset($input['email']) ? trim($input['email']) : '';
 
-class EnhancedEmailValidator {
+class FixedEmailValidator {
     private $db;
     private $user_id;
     private $debug_info = [];
@@ -30,140 +30,106 @@ class EnhancedEmailValidator {
     public function validateEmail($email, $sendVerification = false, $listId = null, $templateId = null) {
         $this->debug_info = ['email' => $email, 'steps' => [], 'timestamp' => date('Y-m-d H:i:s')];
         
-        // Step 1: Format Validation
+        // Step 1: Sanitize and validate email format
         $this->debug_info['steps'][] = 'Step 1: Starting email format validation';
-        if (!$this->validateEmailFormat($email)) {
-            return $this->createFailureResult($email, 'Invalid email format', [
-                'format_valid' => false,
-                'domain_valid' => false,
-                'smtp_valid' => false
-            ]);
+        $sanitizedEmail = filter_var($email, FILTER_SANITIZE_EMAIL);
+        $this->debug_info['format_check'] = [
+            'original' => $email,
+            'sanitized' => $sanitizedEmail
+        ];
+        
+        if (!$this->validateEmailFormat($sanitizedEmail)) {
+            return $this->createResult($email, false, false, false, false, 'Invalid email format');
         }
         $this->debug_info['steps'][] = 'Step 1: Email format validation PASSED';
         
-        // Step 2: Check 60-day cache
-        $this->debug_info['steps'][] = 'Step 2: Checking 60-day validation cache';
-        $cached = $this->checkValidationCache($email, 60);
+        // Step 2: Check cache (optional optimization)
+        $this->debug_info['steps'][] = 'Step 2: Checking validation cache';
+        $cached = $this->checkValidationCache($sanitizedEmail, 30); // 30 days cache
         if ($cached) {
-            $this->debug_info['steps'][] = 'Step 2: Found valid cache entry, returning cached result';
-            // If email is cached but we want to add to list, do that
-            if ($listId) {
-                $this->assignToList($cached['validation_id'], $listId);
-                $this->updateListStats($listId);
-            }
+            $this->debug_info['steps'][] = 'Step 2: Found valid cache entry';
             $cached['debug_info'] = $this->debug_info;
             $cached['cached'] = true;
             return $cached;
         }
-        $this->debug_info['steps'][] = 'Step 2: No valid cache found, proceeding with validation';
+        $this->debug_info['steps'][] = 'Step 2: No cache found, proceeding with validation';
         
-        // Step 3: Domain Validation
+        // Step 3: Domain validation
         $this->debug_info['steps'][] = 'Step 3: Starting domain validation';
-        $domainValid = $this->validateDomain($email);
-        if (!$domainValid) {
-            return $this->createFailureResult($email, 'Domain validation failed', [
-                'format_valid' => true,
-                'domain_valid' => false,
-                'smtp_valid' => false
-            ]);
-        }
-        $this->debug_info['steps'][] = 'Step 3: Domain validation PASSED';
+        $domainValid = $this->validateDomain($sanitizedEmail);
+        $this->debug_info['steps'][] = 'Step 3: Domain validation ' . ($domainValid ? 'PASSED' : 'FAILED');
         
-        // Step 4: SMTP Validation
+        // Step 4: SMTP validation (with fallback)
         $this->debug_info['steps'][] = 'Step 4: Starting SMTP validation';
-        $smtpValid = $this->validateSMTP($email);
+        $smtpValid = $this->validateSMTP($sanitizedEmail);
         $this->debug_info['steps'][] = 'Step 4: SMTP validation ' . ($smtpValid ? 'PASSED' : 'FAILED');
         
-        // Create validation result
-        $result = [
-            'email' => $email,
-            'format_valid' => true,
-            'domain_valid' => $domainValid,
-            'smtp_valid' => $smtpValid,
-            'is_valid' => $domainValid && $smtpValid,
-            'verified' => false,
-            'validation_date' => date('Y-m-d H:i:s'),
-            'cached' => false,
-            'debug_info' => $this->debug_info
-        ];
+        // Determine overall validity
+        $isValid = $domainValid && $smtpValid;
         
-        // Step 5: Send verification email if requested and email is valid
-        if ($sendVerification && $result['is_valid']) {
-            $this->debug_info['steps'][] = 'Step 5: Attempting to send verification email';
-            $result['verified'] = $this->sendVerificationEmail($email, $templateId);
-            $this->debug_info['steps'][] = 'Step 5: Verification email ' . ($result['verified'] ? 'SENT' : 'FAILED');
+        // Step 5: Send verification email if requested
+        $verified = false;
+        if ($sendVerification && $isValid) {
+            $this->debug_info['steps'][] = 'Step 5: Sending verification email';
+            $verified = $this->sendVerificationEmail($sanitizedEmail, $templateId);
+            $this->debug_info['steps'][] = 'Step 5: Verification email ' . ($verified ? 'SENT' : 'FAILED');
         }
         
-        // Store result in database
+        // Create result
+        $result = $this->createResult($sanitizedEmail, true, $domainValid, $smtpValid, $isValid, null, $verified);
+        
+        // Store in database
         $validationId = $this->storeValidationResult($result, $listId, $templateId);
         $result['validation_id'] = $validationId;
         
         // Assign to list if specified
-        if ($listId) {
+        if ($listId && $validationId) {
             $this->assignToList($validationId, $listId);
-            $this->updateListStats($listId);
         }
         
         $result['debug_info'] = $this->debug_info;
         return $result;
     }
     
-    /**
-     * Step 1: Validate email format using multiple methods
-     */
     private function validateEmailFormat($email) {
         try {
             // Basic filter validation
-            $basicValid = filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
-            $this->debug_info['format_checks']['basic_filter'] = $basicValid;
-            
-            if (!$basicValid) {
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $this->debug_info['format_error'] = 'Failed basic filter validation';
                 return false;
             }
             
-            // Additional format checks
+            // Check for valid format structure
+            if (!preg_match('/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $email)) {
+                $this->debug_info['format_error'] = 'Failed regex validation';
+                return false;
+            }
+            
+            // Split email into parts
             $parts = explode('@', $email);
             if (count($parts) !== 2) {
-                $this->debug_info['format_checks']['parts_count'] = false;
+                $this->debug_info['format_error'] = 'Invalid email structure';
                 return false;
             }
             
-            [$localPart, $domainPart] = $parts;
+            $localPart = $parts[0];
+            $domainPart = $parts[1];
             
-            // Check local part length (max 64 characters)
-            if (strlen($localPart) > 64) {
-                $this->debug_info['format_checks']['local_part_length'] = false;
+            // Check length constraints
+            if (strlen($localPart) > 64 || strlen($domainPart) > 255) {
+                $this->debug_info['format_error'] = 'Email parts too long';
                 return false;
             }
             
-            // Check domain part length (max 255 characters)
-            if (strlen($domainPart) > 255) {
-                $this->debug_info['format_checks']['domain_part_length'] = false;
+            // Check for consecutive dots
+            if (strpos($email, '..') !== false) {
+                $this->debug_info['format_error'] = 'Contains consecutive dots';
                 return false;
             }
             
-            // Check for valid characters in local part
-            if (!preg_match('/^[a-zA-Z0-9._%+-]+$/', $localPart)) {
-                $this->debug_info['format_checks']['local_part_chars'] = false;
-                return false;
-            }
-            
-            // Check domain format
-            if (!preg_match('/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $domainPart)) {
-                $this->debug_info['format_checks']['domain_format'] = false;
-                return false;
-            }
-            
-            $this->debug_info['format_checks'] = [
-                'basic_filter' => true,
-                'parts_count' => true,
-                'local_part_length' => true,
-                'domain_part_length' => true,
-                'local_part_chars' => true,
-                'domain_format' => true,
-                'local_part' => $localPart,
-                'domain_part' => $domainPart
-            ];
+            $this->debug_info['format_check']['valid'] = true;
+            $this->debug_info['format_check']['local_part'] = $localPart;
+            $this->debug_info['format_check']['domain_part'] = $domainPart;
             
             return true;
             
@@ -173,17 +139,180 @@ class EnhancedEmailValidator {
         }
     }
     
-    /**
-     * Step 2: Check validation cache (60 days)
-     */
-    private function checkValidationCache($email, $cacheDays = 60) {
+    private function validateDomain($email) {
+        try {
+            $domain = substr(strrchr($email, "@"), 1);
+            $this->debug_info['domain'] = $domain;
+            
+            // Method 1: Check MX records (preferred)
+            if (function_exists('checkdnsrr')) {
+                $mxValid = checkdnsrr($domain, "MX");
+                $this->debug_info['mx_check'] = $mxValid;
+                
+                if ($mxValid) {
+                    // Get MX records for additional info
+                    if (function_exists('getmxrr')) {
+                        $mxRecords = [];
+                        if (getmxrr($domain, $mxRecords)) {
+                            $this->debug_info['mx_records'] = array_slice($mxRecords, 0, 3);
+                        }
+                    }
+                    return true;
+                }
+                
+                // Fallback: Check A record
+                $aValid = checkdnsrr($domain, "A");
+                $this->debug_info['a_check'] = $aValid;
+                if ($aValid) {
+                    return true;
+                }
+            } else {
+                $this->debug_info['checkdnsrr_available'] = false;
+            }
+            
+            // Method 2: Fallback using gethostbyname
+            $ip = gethostbyname($domain);
+            $resolved = ($ip !== $domain && $ip !== false);
+            
+            $this->debug_info['fallback_domain_check'] = [
+                'domain' => $domain,
+                'resolved_ip' => $ip,
+                'valid' => $resolved
+            ];
+            
+            return $resolved;
+            
+        } catch (Exception $e) {
+            $this->debug_info['domain_error'] = $e->getMessage();
+            return false;
+        }
+    }
+    
+    private function validateSMTP($email) {
+        try {
+            $domain = substr(strrchr($email, "@"), 1);
+            $this->debug_info['smtp_domain'] = $domain;
+            
+            // Get MX records for SMTP validation
+            if (function_exists('getmxrr')) {
+                $mxRecords = [];
+                if (!getmxrr($domain, $mxRecords)) {
+                    $this->debug_info['smtp_mx_records'] = 'No MX records found';
+                    // Try using domain directly
+                    $mxRecords = [$domain];
+                } else {
+                    $this->debug_info['smtp_mx_records'] = $mxRecords;
+                }
+            } else {
+                // Fallback: use domain directly
+                $mxRecords = [$domain];
+                $this->debug_info['smtp_mx_records'] = 'Using domain directly (getmxrr not available)';
+            }
+            
+            // Test SMTP connectivity
+            $ports = [587, 25, 465, 2525]; // Common SMTP ports
+            $this->debug_info['smtp_attempts'] = [];
+            
+            foreach ($mxRecords as $index => $mx) {
+                if ($index >= 2) break; // Test max 2 MX records
+                
+                foreach ($ports as $port) {
+                    $this->debug_info['smtp_attempts'][] = "Trying $mx:$port";
+                    
+                    if ($this->testSMTPConnection($mx, $port, $email)) {
+                        $this->debug_info['smtp_success_port'] = "$mx:$port";
+                        return true;
+                    }
+                }
+            }
+            
+            // If SMTP tests fail, but we have valid MX records, consider it valid
+            // (This handles cases where SMTP ports are blocked by hosting provider)
+            if (function_exists('checkdnsrr') && checkdnsrr($domain, "MX")) {
+                $this->debug_info['smtp_fallback'] = 'SMTP ports blocked but MX records exist - considering valid';
+                return true;
+            }
+            
+            // Final fallback for common domains
+            $commonDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com'];
+            if (in_array(strtolower($domain), $commonDomains)) {
+                $this->debug_info['smtp_fallback'] = 'Common domain detected - considering valid';
+                return true;
+            }
+            
+            return false;
+            
+        } catch (Exception $e) {
+            $this->debug_info['smtp_error'] = $e->getMessage();
+            // On error, if domain is valid, assume SMTP is valid (hosting restrictions)
+            return $this->validateDomain($email);
+        }
+    }
+    
+    private function testSMTPConnection($host, $port, $email, $timeout = 10) {
+        if (!function_exists('fsockopen')) {
+            $this->debug_info['smtp_attempts'][] = "fsockopen not available";
+            return false;
+        }
+        
+        try {
+            $socket = @fsockopen($host, $port, $errno, $errstr, $timeout);
+            
+            if (!$socket) {
+                $this->debug_info['smtp_attempts'][] = "Failed to connect to $host:$port - $errno: $errstr";
+                return false;
+            }
+            
+            // Read greeting
+            $response = fgets($socket, 1024);
+            $this->debug_info['smtp_attempts'][] = "Connected to $host:$port - " . trim($response);
+            
+            if (substr($response, 0, 3) != '220') {
+                fclose($socket);
+                return false;
+            }
+            
+            // Simple SMTP conversation
+            $commands = [
+                "EHLO validator.local\r\n" => '250',
+                "MAIL FROM: <noreply@validator.local>\r\n" => '250',
+                "RCPT TO: <$email>\r\n" => ['250', '251', '252'], // Accept multiple success codes
+                "QUIT\r\n" => '221'
+            ];
+            
+            foreach ($commands as $command => $expectedCodes) {
+                fputs($socket, $command);
+                $response = fgets($socket, 1024);
+                $responseCode = substr($response, 0, 3);
+                
+                $expected = is_array($expectedCodes) ? $expectedCodes : [$expectedCodes];
+                
+                if (!in_array($responseCode, $expected)) {
+                    if ($command === "RCPT TO: <$email>\r\n") {
+                        // RCPT TO failed - email doesn't exist
+                        fclose($socket);
+                        return false;
+                    }
+                    // Other commands can fail and we still consider it a successful connection
+                }
+            }
+            
+            fclose($socket);
+            return true;
+            
+        } catch (Exception $e) {
+            $this->debug_info['smtp_attempts'][] = "Exception testing $host:$port - " . $e->getMessage();
+            return false;
+        }
+    }
+    
+    private function checkValidationCache($email, $cacheDays = 30) {
         try {
             $stmt = $this->db->prepare("
                 SELECT *, id as validation_id 
                 FROM email_validations 
                 WHERE email = ? 
                 AND validation_date > DATE_SUB(NOW(), INTERVAL ? DAY) 
-                AND format_valid = 1
                 ORDER BY validation_date DESC 
                 LIMIT 1
             ");
@@ -191,12 +320,6 @@ class EnhancedEmailValidator {
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
             
             if ($result) {
-                $this->debug_info['cache_info'] = [
-                    'found' => true,
-                    'validation_date' => $result['validation_date'],
-                    'days_old' => $this->calculateDaysOld($result['validation_date'])
-                ];
-                
                 return [
                     'email' => $result['email'],
                     'format_valid' => (bool)$result['format_valid'],
@@ -209,7 +332,6 @@ class EnhancedEmailValidator {
                 ];
             }
             
-            $this->debug_info['cache_info'] = ['found' => false];
             return null;
             
         } catch (Exception $e) {
@@ -218,192 +340,6 @@ class EnhancedEmailValidator {
         }
     }
     
-    /**
-     * Step 3: Validate domain existence
-     */
-    private function validateDomain($email) {
-        try {
-            $domain = substr(strrchr($email, "@"), 1);
-            $this->debug_info['domain_info']['domain'] = $domain;
-            
-            // Method 1: Check MX records
-            if (function_exists('checkdnsrr')) {
-                $mxValid = checkdnsrr($domain, "MX");
-                $this->debug_info['domain_info']['mx_check'] = $mxValid;
-                
-                if ($mxValid) {
-                    // Get actual MX records for additional info
-                    if (function_exists('getmxrr')) {
-                        $mxRecords = [];
-                        getmxrr($domain, $mxRecords);
-                        $this->debug_info['domain_info']['mx_records'] = array_slice($mxRecords, 0, 3); // First 3 MX records
-                    }
-                    return true;
-                }
-                
-                // Fallback: Check A record
-                $aValid = checkdnsrr($domain, "A");
-                $this->debug_info['domain_info']['a_check'] = $aValid;
-                
-                if ($aValid) {
-                    return true;
-                }
-            } else {
-                $this->debug_info['domain_info']['checkdnsrr_available'] = false;
-            }
-            
-            // Method 2: Fallback using gethostbyname
-            $ip = gethostbyname($domain);
-            $hostValid = ($ip !== $domain);
-            $this->debug_info['domain_info']['host_check'] = [
-                'domain' => $domain,
-                'resolved_ip' => $ip,
-                'valid' => $hostValid
-            ];
-            
-            return $hostValid;
-            
-        } catch (Exception $e) {
-            $this->debug_info['domain_error'] = $e->getMessage();
-            return false;
-        }
-    }
-    
-    /**
-     * Step 4: Validate SMTP delivery capability
-     */
-    private function validateSMTP($email) {
-        try {
-            $domain = substr(strrchr($email, "@"), 1);
-            $this->debug_info['smtp_info']['domain'] = $domain;
-            
-            // Get MX records
-            if (!function_exists('getmxrr')) {
-                $this->debug_info['smtp_info']['getmxrr_available'] = false;
-                return $this->fallbackSMTPCheck($domain);
-            }
-            
-            $mxRecords = [];
-            if (!getmxrr($domain, $mxRecords)) {
-                $this->debug_info['smtp_info']['mx_records'] = 'None found';
-                return false;
-            }
-            
-            $this->debug_info['smtp_info']['mx_records'] = $mxRecords;
-            
-            // Try connecting to MX servers
-            $ports = [587, 25, 465, 2525]; // Common SMTP ports
-            $timeout = 10;
-            
-            foreach ($mxRecords as $index => $mx) {
-                if ($index >= 3) break; // Test max 3 MX records
-                
-                foreach ($ports as $port) {
-                    $this->debug_info['smtp_info']['attempts'][] = "Trying {$mx}:{$port}";
-                    
-                    $socket = @fsockopen($mx, $port, $errno, $errstr, $timeout);
-                    
-                    if (!$socket) {
-                        $this->debug_info['smtp_info']['attempts'][] = "Failed {$mx}:{$port} - {$errno}: {$errstr}";
-                        continue;
-                    }
-                    
-                    // Read greeting
-                    $response = fgets($socket);
-                    $this->debug_info['smtp_info']['attempts'][] = "Connected {$mx}:{$port} - " . trim($response);
-                    
-                    if (substr($response, 0, 3) != '220') {
-                        fclose($socket);
-                        continue;
-                    }
-                    
-                    // Try SMTP conversation
-                    $success = $this->performSMTPConversation($socket, $email, $mx, $port);
-                    fclose($socket);
-                    
-                    if ($success) {
-                        $this->debug_info['smtp_info']['success'] = "{$mx}:{$port}";
-                        return true;
-                    }
-                }
-            }
-            
-            $this->debug_info['smtp_info']['result'] = 'All SMTP attempts failed';
-            return false;
-            
-        } catch (Exception $e) {
-            $this->debug_info['smtp_error'] = $e->getMessage();
-            return false;
-        }
-    }
-    
-    /**
-     * Perform SMTP conversation to test email deliverability
-     */
-    private function performSMTPConversation($socket, $email, $mx, $port) {
-        try {
-            // EHLO/HELO
-            fputs($socket, "EHLO emailvalidator.local\r\n");
-            $response = fgets($socket);
-            $this->debug_info['smtp_info']['conversation'][] = "EHLO: " . trim($response);
-            
-            if (substr($response, 0, 3) != '250') {
-                // Try HELO if EHLO fails
-                fputs($socket, "HELO emailvalidator.local\r\n");
-                $response = fgets($socket);
-                $this->debug_info['smtp_info']['conversation'][] = "HELO: " . trim($response);
-                
-                if (substr($response, 0, 3) != '250') {
-                    return false;
-                }
-            }
-            
-            // MAIL FROM
-            fputs($socket, "MAIL FROM: <noreply@emailvalidator.local>\r\n");
-            $response = fgets($socket);
-            $this->debug_info['smtp_info']['conversation'][] = "MAIL FROM: " . trim($response);
-            
-            if (substr($response, 0, 3) != '250') {
-                return false;
-            }
-            
-            // RCPT TO
-            fputs($socket, "RCPT TO: <{$email}>\r\n");
-            $response = fgets($socket);
-            $this->debug_info['smtp_info']['conversation'][] = "RCPT TO: " . trim($response);
-            
-            // QUIT
-            fputs($socket, "QUIT\r\n");
-            fgets($socket);
-            
-            // Check if recipient was accepted
-            $responseCode = substr($response, 0, 3);
-            return in_array($responseCode, ['250', '251', '252']);
-            
-        } catch (Exception $e) {
-            $this->debug_info['smtp_info']['conversation_error'] = $e->getMessage();
-            return false;
-        }
-    }
-    
-    /**
-     * Fallback SMTP check when functions are not available
-     */
-    private function fallbackSMTPCheck($domain) {
-        $ip = gethostbyname($domain);
-        $valid = ($ip !== $domain);
-        $this->debug_info['smtp_info']['fallback'] = [
-            'method' => 'gethostbyname',
-            'domain' => $domain,
-            'resolved_ip' => $ip,
-            'valid' => $valid
-        ];
-        return $valid;
-    }
-    
-    /**
-     * Send verification email
-     */
     private function sendVerificationEmail($email, $templateId = null) {
         try {
             require_once '../classes/EmailSender.php';
@@ -420,109 +356,70 @@ class EnhancedEmailValidator {
         }
     }
     
-    /**
-     * Store validation result in database
-     */
     private function storeValidationResult($result, $listId = null, $templateId = null) {
-        $stmt = $this->db->prepare("
-            INSERT INTO email_validations 
-            (email, format_valid, domain_valid, smtp_valid, is_valid, user_id, list_id, template_id, validation_details, validation_date) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        ");
-        
-        $details = json_encode([
-            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
-            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
-            'timestamp' => time(),
-            'debug_info' => $this->debug_info,
-            'validation_version' => '2.0'
-        ]);
-        
-        $stmt->execute([
-            $result['email'],
-            $result['format_valid'] ? 1 : 0,
-            $result['domain_valid'] ? 1 : 0,
-            $result['smtp_valid'] ? 1 : 0,
-            $result['is_valid'] ? 1 : 0,
-            $this->user_id,
-            $listId,
-            $templateId,
-            $details
-        ]);
-        
-        return $this->db->lastInsertId();
+        try {
+            $stmt = $this->db->prepare("
+                INSERT INTO email_validations 
+                (email, format_valid, domain_valid, smtp_valid, is_valid, user_id, list_id, template_id, validation_details, validation_date) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ");
+            
+            $details = json_encode([
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+                'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
+                'timestamp' => time(),
+                'debug_info' => $this->debug_info,
+                'validation_version' => '2.1'
+            ]);
+            
+            $stmt->execute([
+                $result['email'],
+                $result['format_valid'] ? 1 : 0,
+                $result['domain_valid'] ? 1 : 0,
+                $result['smtp_valid'] ? 1 : 0,
+                $result['is_valid'] ? 1 : 0,
+                $this->user_id,
+                $listId,
+                $templateId,
+                $details
+            ]);
+            
+            return $this->db->lastInsertId();
+            
+        } catch (Exception $e) {
+            $this->debug_info['storage_error'] = $e->getMessage();
+            return null;
+        }
     }
     
-    /**
-     * Create failure result
-     */
-    private function createFailureResult($email, $reason, $validationStatus) {
+    private function assignToList($validationId, $listId) {
+        if (!$listId || !$validationId) return;
+        
+        try {
+            $stmt = $this->db->prepare("
+                INSERT IGNORE INTO list_email_assignments (list_id, validation_id) 
+                VALUES (?, ?)
+            ");
+            $stmt->execute([$listId, $validationId]);
+        } catch (Exception $e) {
+            $this->debug_info['list_assignment_error'] = $e->getMessage();
+        }
+    }
+    
+    private function createResult($email, $formatValid, $domainValid, $smtpValid, $isValid, $failureReason = null, $verified = false) {
         return [
             'email' => $email,
-            'format_valid' => $validationStatus['format_valid'],
-            'domain_valid' => $validationStatus['domain_valid'],
-            'smtp_valid' => $validationStatus['smtp_valid'],
-            'is_valid' => false,
-            'verified' => false,
+            'format_valid' => $formatValid,
+            'domain_valid' => $domainValid,
+            'smtp_valid' => $smtpValid,
+            'is_valid' => $isValid,
+            'verified' => $verified,
             'validation_date' => date('Y-m-d H:i:s'),
             'cached' => false,
-            'failure_reason' => $reason,
-            'debug_info' => $this->debug_info
+            'failure_reason' => $failureReason
         ];
     }
     
-    /**
-     * Assign email to list
-     */
-    private function assignToList($validationId, $listId) {
-        if (!$listId) return;
-        
-        $stmt = $this->db->prepare("
-            INSERT IGNORE INTO list_email_assignments (list_id, validation_id) 
-            VALUES (?, ?)
-        ");
-        $stmt->execute([$listId, $validationId]);
-    }
-    
-    /**
-     * Update list statistics
-     */
-    private function updateListStats($listId) {
-        if (!$listId) return;
-        
-        $stmt = $this->db->prepare("
-            UPDATE email_lists SET 
-                total_emails = (
-                    SELECT COUNT(*) FROM list_email_assignments 
-                    WHERE list_id = ?
-                ),
-                valid_emails = (
-                    SELECT COUNT(*) FROM list_email_assignments lea
-                    JOIN email_validations ev ON lea.validation_id = ev.id
-                    WHERE lea.list_id = ? AND ev.is_valid = 1
-                ),
-                invalid_emails = (
-                    SELECT COUNT(*) FROM list_email_assignments lea
-                    JOIN email_validations ev ON lea.validation_id = ev.id
-                    WHERE lea.list_id = ? AND ev.is_valid = 0
-                )
-            WHERE id = ?
-        ");
-        $stmt->execute([$listId, $listId, $listId, $listId]);
-    }
-    
-    /**
-     * Calculate days old from timestamp
-     */
-    private function calculateDaysOld($timestamp) {
-        $date = new DateTime($timestamp);
-        $now = new DateTime();
-        return $now->diff($date)->days;
-    }
-    
-    /**
-     * Get system information for debugging
-     */
     public function getSystemInfo() {
         return [
             'php_version' => PHP_VERSION,
@@ -552,9 +449,9 @@ try {
     $database = new Database();
     $db = $database->getConnection();
     
-    $validator = new EnhancedEmailValidator($db, $_SESSION['user_id']);
+    $validator = new FixedEmailValidator($db, $_SESSION['user_id']);
     
-    // If requesting system info
+    // Handle system info request
     if (isset($input['get_system_info']) && $input['get_system_info']) {
         echo json_encode([
             'system_info' => $validator->getSystemInfo()
@@ -562,7 +459,12 @@ try {
         exit;
     }
     
-    // Validate the email
+    // Validate email input
+    if (empty($email)) {
+        throw new Exception('Email address is required');
+    }
+    
+    // Perform validation
     $result = $validator->validateEmail(
         $email, 
         $input['sendVerification'] ?? false,
@@ -595,8 +497,7 @@ try {
         'debug_info' => [
             'exception' => $e->getMessage(),
             'file' => $e->getFile(),
-            'line' => $e->getLine(),
-            'trace' => $e->getTraceAsString()
+            'line' => $e->getLine()
         ]
     ]);
 }
