@@ -1,0 +1,33 @@
+# Minimal Security .htaccess - No URL Routing
+
+# Prevent access to sensitive files
+<FilesMatch "\.(env|log|ini|conf|htaccess|htpasswd|sql|backup)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Prevent access to config and includes directories
+<Directory "config">
+    Order allow,deny
+    Deny from all
+</Directory>
+
+<Directory "includes">
+    Order allow,deny
+    Deny from all
+</Directory>
+
+# Prevent access to database and backup files
+<FilesMatch "\.(sql|db|backup|bak)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Basic security headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+</IfModule>
+
+# Default directory index
+DirectoryIndex index.php index.html
