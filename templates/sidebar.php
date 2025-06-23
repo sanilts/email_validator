@@ -1,7 +1,26 @@
 <?php
+// ===================================================================
+// FIXES FOR BROKEN LINKS - UPDATED NAVIGATION
+// ===================================================================
+
+// Update templates/sidebar.php with corrected navigation
+?>
+
+<?php
+// Fix the navigation links in templates/sidebar.php
 $current_page = basename($_SERVER['PHP_SELF']);
 $is_admin = ($_SESSION['role'] ?? '') === 'admin';
 $base_path = $is_admin ? '../' : '';
+
+// Determine the correct base URL
+$current_dir = basename(dirname($_SERVER['PHP_SELF']));
+if ($current_dir === 'admin') {
+    $nav_base = '';
+} elseif ($current_dir === 'user') {
+    $nav_base = '';
+} else {
+    $nav_base = './';
+}
 ?>
 
 <div class="sidebar" id="sidebar">
@@ -9,7 +28,7 @@ $base_path = $is_admin ? '../' : '';
         <div class="d-flex align-items-center">
             <?php 
             $logo_path = get_system_setting('company_logo');
-            if ($logo_path && file_exists($base_path . $logo_path)): 
+            if ($logo_path && file_exists($logo_path)): 
             ?>
                 <img src="<?php echo BASE_URL . $logo_path; ?>" alt="Logo" class="me-2" style="height: 40px;">
             <?php else: ?>
@@ -24,33 +43,45 @@ $base_path = $is_admin ? '../' : '';
             <!-- Admin Navigation -->
             <ul class="nav flex-column">
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'index.php' ? 'active' : ''; ?>" href="index.php">
+                    <a class="nav-link <?php echo $current_page === 'index.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>index.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'users.php' ? 'active' : ''; ?>" href="users.php">
+                    <a class="nav-link <?php echo $current_page === 'users.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>users.php">
                         <i class="fas fa-users"></i>
                         <span>Users</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'settings.php' ? 'active' : ''; ?>" href="settings.php">
+                    <a class="nav-link <?php echo $current_page === 'settings.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>settings.php">
                         <i class="fas fa-cog"></i>
                         <span>Settings</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'logs.php' ? 'active' : ''; ?>" href="logs.php">
+                    <a class="nav-link <?php echo $current_page === 'logs.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>logs.php">
                         <i class="fas fa-list-alt"></i>
                         <span>Activity Logs</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'company.php' ? 'active' : ''; ?>" href="company.php">
+                    <a class="nav-link <?php echo $current_page === 'company.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>company.php">
                         <i class="fas fa-building"></i>
                         <span>Company</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page === 'backup.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>backup.php">
+                        <i class="fas fa-database"></i>
+                        <span>Backup</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page === 'system_health.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>system_health.php">
+                        <i class="fas fa-heartbeat"></i>
+                        <span>System Health</span>
                     </a>
                 </li>
                 <li class="nav-item mt-3">
@@ -67,37 +98,49 @@ $base_path = $is_admin ? '../' : '';
             <!-- User Navigation -->
             <ul class="nav flex-column">
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'dashboard.php' ? 'active' : ''; ?>" href="dashboard.php">
+                    <a class="nav-link <?php echo $current_page === 'dashboard.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'validate.php' ? 'active' : ''; ?>" href="validate.php">
+                    <a class="nav-link <?php echo $current_page === 'validate.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>validate.php">
                         <i class="fas fa-envelope-check"></i>
                         <span>Validate Email</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'bulk_validate.php' ? 'active' : ''; ?>" href="bulk_validate.php">
+                    <a class="nav-link <?php echo $current_page === 'bulk_validate.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>bulk_validate.php">
                         <i class="fas fa-upload"></i>
                         <span>Bulk Validation</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'lists.php' ? 'active' : ''; ?>" href="lists.php">
+                    <a class="nav-link <?php echo $current_page === 'lists.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>lists.php">
                         <i class="fas fa-list"></i>
                         <span>Email Lists</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'templates.php' ? 'active' : ''; ?>" href="templates.php">
+                    <a class="nav-link <?php echo $current_page === 'templates.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>templates.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Templates</span>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page === 'profile.php' ? 'active' : ''; ?>" href="profile.php">
+                    <a class="nav-link <?php echo $current_page === 'email_campaigns.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>email_campaigns.php">
+                        <i class="fas fa-bullhorn"></i>
+                        <span>Campaigns</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page === 'analytics.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>analytics.php">
+                        <i class="fas fa-chart-bar"></i>
+                        <span>Analytics</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page === 'profile.php' ? 'active' : ''; ?>" href="<?php echo $nav_base; ?>profile.php">
                         <i class="fas fa-user-cog"></i>
                         <span>Profile</span>
                     </a>
